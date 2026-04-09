@@ -701,6 +701,12 @@ const anim = {
     const pos = interpolateRoute(this.currentSegment, this.progress);
     movingMarker.setLatLng(pos);
     this._spawnTrail(pos);
+
+    // Camera follows marker during flight segments
+    if (seg.transport === 'flight') {
+      const zoom = map.getZoom();
+      map.setView(pos, zoom, { animate: false });
+    }
   },
 
   _spawnTrail(pos) {
@@ -719,6 +725,21 @@ const anim = {
     if (this.trailTimers.length > 50) {
       clearTimeout(this.trailTimers.shift());
     }
+  },
+
+  _dwellAtStop(callback) {
+    // Pause briefly at each stop (1.5s at 1x, scales with speed)
+    const dwellMs = 1500 / this.speed;
+    this.pause();
+    // Show arrival stop info
+    const seg = segments[this.currentSegment];
+    if (seg) {
+      this._updateStopCard(seg.toStop);
+      this._updateMarkerStates(seg.toStop);
+    }
+    setTimeout(() => {
+      callback();
+    }, dwellMs);
   },
 
   _onSegmentComplete() {
@@ -742,19 +763,24 @@ const anim = {
 
     if (curDay !== nextDay) {
       this.pause();
-      this.currentSegment = nextSeg;
-      this.progress = 0;
-      this._showDayTransition(nextDay, () => {
-        this._enterSegment(nextSeg);
-        this.play();
+      this._dwellAtStop(() => {
+        this.currentSegment = nextSeg;
+        this.progress = 0;
+        this._showDayTransition(nextDay, () => {
+          this._enterSegment(nextSeg);
+          this.play();
+        });
       });
       return;
     }
 
-    this.currentSegment = nextSeg;
-    this.progress = 0;
-    this._enterSegment(nextSeg);
-    requestAnimationFrame(t => this.tick(t));
+    // Dwell at the arrived stop before moving on
+    this._dwellAtStop(() => {
+      this.currentSegment = nextSeg;
+      this.progress = 0;
+      this._enterSegment(nextSeg);
+      this.play();
+    });
   },
 
   _enterSegment(segIdx) {
@@ -771,14 +797,19 @@ const anim = {
     this._updateMarkerStates(seg.fromStop);
     this._updateBadge(stop.day);
 
-    // Fly to if it's a city-level segment (not flight)
-    if (seg.transport !== 'flight' && seg.points && seg.points.length > 0) {
-      const bounds = L.latLngBounds(seg.points);
-      const dist = map.distance(seg.points[0], seg.points[seg.points.length - 1]);
-      if (dist < 3000) {
-        map.flyTo(seg.points[0], 15, { duration: 0.8 });
+    // Camera: fly to appropriate view for this segment
+    if (seg.points && seg.points.length > 0) {
+      if (seg.transport === 'flight') {
+        // Flight: zoom out to see departure, then camera will follow marker
+        map.flyTo(seg.points[0], 7, { duration: 1.0 });
       } else {
-        map.flyToBounds(bounds.pad(0.5), { duration: 0.8 });
+        const dist = map.distance(seg.points[0], seg.points[seg.points.length - 1]);
+        if (dist < 3000) {
+          map.flyTo(seg.points[0], 15, { duration: 0.8 });
+        } else {
+          const bounds = L.latLngBounds(seg.points);
+          map.flyToBounds(bounds.pad(0.5), { duration: 0.8 });
+        }
       }
     }
 

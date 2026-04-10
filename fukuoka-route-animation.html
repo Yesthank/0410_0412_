@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Fukuoka Trip — Route Animation</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root {
+  --bg: #faf8f4;
+  --panel: rgba(255, 255, 255, 0.85);
+  --ink: #2c2c2c;
+  --day1: #d64545;
+  --day2: #4a8a6a;
+  --day3: #3a4a7a;
+  --gold: #c4993e;
+  --flight: #d64545;
+  --subway: #3a4a7a;
+  --walk: #4a8a6a;
+  --bus: #c4993e;
+  --font-body: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --font-serif: 'Nanum Myeongjo', 'Batang', Georgia, serif;
+  --font-mono: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  --radius: 14px;
+  --glass-border: 1px solid rgba(255,255,255,0.18);
+  --glass-shadow: 0 4px 24px rgba(0,0,0,0.10);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; font-family: var(--font-body); color: var(--ink); }
+#map { width: 100%; height: 100%; z-index: 0; }
+
+/* ── Glass panel mixin ── */
+.glass {
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: var(--radius);
+}
+
+/* ── Day filter panel (top-left) ── */
+.day-panel {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+}
+.day-panel button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .25s ease;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.day-panel button:hover { background: rgba(0,0,0,0.05); }
+.day-panel button.active { color: #fff; }
+.day-panel button[data-day="1"].active { background: var(--day1); }
+.day-panel button[data-day="2"].active { background: var(--day2); }
+.day-panel button[data-day="3"].active { background: var(--day3); }
+.day-panel button[data-day="all"].active { background: var(--ink); }
+.day-panel .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Current day badge (top-right) ── */
+.current-day-badge {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  padding: 10px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: all .4s ease;
+}
+.badge-day {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  transition: color .4s ease;
+}
+.badge-date {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.6;
+  letter-spacing: 0.5px;
+}
+
+/* ── Stop info card (bottom) ── */
+.stop-card {
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 14px 22px;
+  min-width: 300px;
+  max-width: 420px;
+  width: calc(100% - 32px);
+  transition: all .35s cubic-bezier(.4,0,.2,1);
+  opacity: 1;
+}
+.stop-card.hide { opacity: 0; transform: translateX(-50%) translateY(12px); pointer-events: none; }
+.stop-card-inner { display: flex; align-items: flex-start; gap: 14px; }
+.stop-card-icon {
+  font-size: 28px;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(0,0,0,0.04);
+  flex-shrink: 0;
+}
+.stop-card-body { flex: 1; min-width: 0; }
+.stop-card-name {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.stop-card-name-en {
+  font-size: 12px;
+  opacity: 0.5;
+  margin-bottom: 6px;
+}
+.stop-card-desc {
+  font-size: 13px;
+  opacity: 0.7;
+  line-height: 1.4;
+}
+.stop-card-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  opacity: 0.5;
+}
+
+/* ── Control bar (bottom center) ── */
+.control-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity .4s ease;
+  max-width: 460px;
+  width: calc(100% - 32px);
+}
+.control-bar.idle { opacity: 0.3; }
+.control-bar:hover, .control-bar.active { opacity: 1; }
+.ctrl-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .2s ease;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+.ctrl-btn:hover { background: rgba(0,0,0,0.06); transform: scale(1.08); }
+.ctrl-btn:active { transform: scale(0.95); }
+.ctrl-btn.play-btn { width: 42px; height: 42px; font-size: 20px; }
+
+.progress-wrap {
+  flex: 1;
+  height: 6px;
+  background: rgba(0,0,0,0.08);
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+  min-width: 60px;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--day1);
+  transition: width .15s linear, background .4s ease;
+  position: relative;
+}
+.progress-fill::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: -4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid currentColor;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  color: inherit;
+}
+
+.speed-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s ease;
+  color: var(--ink);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.speed-btn.active { opacity: 1; background: rgba(0,0,0,0.08); }
+.speed-btn:hover { opacity: 0.8; }
+
+/* ── Day transition overlay ── */
+.day-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 31, 46, 0);
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+  pointer-events: none;
+  transition: background .5s ease, backdrop-filter .5s ease, -webkit-backdrop-filter .5s ease;
+}
+.day-overlay.show {
+  pointer-events: auto;
+  background: rgba(28, 31, 46, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.day-overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.day-overlay-num {
+  font-family: var(--font-serif);
+  font-size: 4rem;
+  font-weight: 700;
+  color: var(--day1);
+  opacity: 0;
+  transform: scale(0.5);
+  transition: all .4s cubic-bezier(.4,0,.2,1);
+}
+.day-overlay.show .day-overlay-num {
+  opacity: 1;
+  transform: scale(1);
+  transition-delay: .15s;
+}
+.day-overlay-date {
+  font-family: var(--font-serif);
+  font-size: 1.2rem;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: all .4s ease;
+}
+.day-overlay.show .day-overlay-date {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: .35s;
+}
+.day-overlay-sub {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: rgba(255,255,255,0.6);
+  opacity: 0;
+  transition: opacity .4s ease;
+}
+.day-overlay.show .day-overlay-sub {
+  opacity: 1;
+  transition-delay: .55s;
+}
+
+/* ── Leaflet marker overrides ── */
+.stop-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  font-size: 18px;
+  transition: all .3s ease;
+  cursor: pointer;
+}
+.stop-marker.active {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 6px rgba(0,0,0,0.08), 0 2px 12px rgba(0,0,0,0.2);
+  z-index: 900 !important;
+}
+.stop-marker.dimmed { opacity: 0.4; }
+
+.moving-marker {
+  font-size: 24px;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+  transition: none;
+  z-index: 1000 !important;
+}
+
+/* ── Trail dots ── */
+.trail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--day1);
+  opacity: 0.6;
+  animation: trailFade .8s ease forwards;
+}
+@keyframes trailFade {
+  to { opacity: 0; transform: scale(0.3); }
+}
+
+/* ── Mobile ── */
+@media (max-width: 600px) {
+  .day-panel { top: 10px; left: 10px; padding: 6px; }
+  .day-panel button { padding: 6px 10px; font-size: 12px; }
+  .current-day-badge { top: 10px; right: 10px; padding: 8px 12px; }
+  .badge-day { font-size: 14px; }
+  .stop-card { bottom: 80px; padding: 12px 16px; min-width: 0; }
+  .stop-card-icon { width: 40px; height: 40px; font-size: 22px; }
+  .stop-card-name { font-size: 14px; }
+  .control-bar { bottom: 14px; padding: 8px 12px; }
+  .day-overlay-num { font-size: 3rem; }
+}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Day filter panel -->
+<div class="day-panel glass" id="dayPanel">
+  <button data-day="all" class="active"><span class="dot" style="background:var(--ink)"></span>All</button>
+  <button data-day="1"><span class="dot" style="background:var(--day1)"></span>Day 1</button>
+  <button data-day="2"><span class="dot" style="background:var(--day2)"></span>Day 2</button>
+  <button data-day="3"><span class="dot" style="background:var(--day3)"></span>Day 3</button>
+</div>
+
+<!-- Current day badge -->
+<div class="current-day-badge glass" id="dayBadge">
+  <span class="badge-day" id="badgeDay">DAY 1</span>
+  <span class="badge-date" id="badgeDate">4.10 FRI</span>
+</div>
+
+<!-- Stop info card -->
+<div class="stop-card glass" id="stopCard">
+  <div class="stop-card-inner">
+    <div class="stop-card-icon" id="cardIcon">✈️</div>
+    <div class="stop-card-body">
+      <div class="stop-card-name" id="cardName">대구공항</div>
+      <div class="stop-card-name-en" id="cardNameEn">Daegu Airport (TAE)</div>
+      <div class="stop-card-desc" id="cardDesc">TW215 · B737-800 · 좌석 4E</div>
+      <div class="stop-card-meta">
+        <span id="cardTime">17:20</span>
+        <span id="cardTransport">✈️ flight</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Control bar -->
+<div class="control-bar glass" id="controlBar">
+  <button class="ctrl-btn" id="prevBtn" aria-label="Previous stop">⏮</button>
+  <button class="ctrl-btn play-btn" id="playBtn" aria-label="Play">▶</button>
+  <button class="ctrl-btn" id="nextBtn" aria-label="Next stop">⏭</button>
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-fill" id="progressFill" style="width:0%"></div>
+  </div>
+  <button class="speed-btn active" data-speed="1">1x</button>
+  <button class="speed-btn" data-speed="2">2x</button>
+  <button class="speed-btn" data-speed="4">4x</button>
+</div>
+
+<!-- Day transition overlay -->
+<div class="day-overlay" id="dayOverlay">
+  <div class="day-overlay-content">
+    <span class="day-overlay-num" id="overlayNum">DAY 1</span>
+    <span class="day-overlay-date" id="overlayDate">4월 10일 금요일</span>
+    <span class="day-overlay-sub" id="overlaySub">도착, 맛집, 재즈</span>
+  </div>
+</div>
+
+<script>
+(function() {
+'use strict';
+
+// ══════════════════════════════════════════
+//  DATA
+// ══════════════════════════════════════════
+
+const STOPS = [
+  { id:1,  name:"Daegu Airport (TAE)",       nameKr:"대구공항",           lat:35.8941, lng:128.6590, day:1, time:"17:20", icon:"✈️",  transport:"flight", description:"TW215 · B737-800 · 좌석 4E",               travelMin:65 },
+  { id:2,  name:"Fukuoka Airport (FUK)",      nameKr:"후쿠오카공항",       lat:33.5859, lng:130.4507, day:1, time:"18:25", icon:"🛬",  transport:"subway",  description:"도착 → 공항선K (가라쓰행) 탑승",            travelMin:11 },
+  { id:3,  name:"Tenjin Station",             nameKr:"덴진역",            lat:33.5903, lng:130.3990, day:1, time:"18:51", icon:"🚇",  transport:"walk",    description:"공항선K 하차 · 약 21분 소요",               travelMin:7  },
+  { id:4,  name:"Plaza Hotel Premier",        nameKr:"플라자호텔 프리미어", lat:33.5883, lng:130.3912, day:1, time:"19:05", icon:"🏨",  transport:"walk",    description:"1 Chome-14-13 Daimyo · 체크인 · 도보 11분", travelMin:5  },
+  { id:5,  name:"Dinner in Daimyo",           nameKr:"다이묘 저녁식사",    lat:33.5890, lng:130.3930, day:1, time:"19:30", icon:"🍴",  transport:"walk",    description:"니쿠젠/효탄스시/멘야가가 등 10곳 중 택1",    travelMin:3  },
+  { id:6,  name:"Jazz Cafe Backstage",        nameKr:"재즈카페 백스테이지", lat:33.5892, lng:130.3945, day:1, time:"21:30", icon:"🎷",  transport:"walk",    description:"Daimyo 2-4-31 平子ビル 1F",                travelMin:4  },
+  { id:7,  name:"Plaza Hotel Premier",        nameKr:"숙소 복귀",         lat:33.5883, lng:130.3912, day:1, time:"23:00", icon:"🌙",  transport:"sleep",   description:"Day 1 종료 · 취침",                        travelMin:0  },
+
+  { id:8,  name:"Fukuoka Castle Ruins",       nameKr:"후쿠오카 성터",      lat:33.5852, lng:130.3818, day:2, time:"09:00", icon:"🏯",  transport:"walk",    description:"숙소에서 도보 · 가는 길에 구경",             travelMin:12 },
+  { id:9,  name:"Ohori Park",                 nameKr:"오호리공원",         lat:33.5834, lng:130.3768, day:2, time:"11:00", icon:"🌿",  transport:"walk",    description:"오호리 우나기 도시락 픽업 🍱 · 팬케이크 🥞 · 산책", travelMin:8  },
+  { id:10, name:"Nishi Park",                 nameKr:"니시공원",           lat:33.5930, lng:130.3700, day:2, time:"10:30", icon:"🌸",  transport:"walk",    description:"벚꽃 산책",                                 travelMin:15 },
+  { id:11, name:"Lunch near Nishi Park",      nameKr:"점심식사",           lat:33.5928, lng:130.3740, day:2, time:"12:00", icon:"🍜",  transport:"walk",    description:"시나리우동/간소나가하마야/이마야버거 중 택1",  travelMin:5  },
+  { id:12, name:"Ticro Market",               nameKr:"티크로 마켓",        lat:33.5887, lng:130.3920, day:2, time:"14:00", icon:"💿",  transport:"walk",    description:"LP 탐방 1 · 숙소 근처",                     travelMin:20 },
+  { id:13, name:"Borderline Records",         nameKr:"보더라인 레코드",    lat:33.5885, lng:130.3918, day:2, time:"14:30", icon:"🎵",  transport:"walk",    description:"LP 탐방 2",                                 travelMin:1  },
+  { id:14, name:"Face Records",               nameKr:"페이스 레코드",      lat:33.5900, lng:130.3985, day:2, time:"15:00", icon:"🎶",  transport:"walk",    description:"LP 탐방 3 · 텐진역 근처",                   travelMin:8  },
+  { id:15, name:"Tower Records (PARCO)",      nameKr:"타워레코드 (파르코)",lat:33.5895, lng:130.3970, day:2, time:"15:30", icon:"🗼",  transport:"walk",    description:"LP 탐방 4 · 새 LP · 파르코 백화점 구경",     travelMin:2  },
+  { id:16, name:"Maguro to Gohan Kurodahan",   nameKr:"마구로토 고항 쿠로다한", lat:33.5885, lng:130.3908, day:2, time:"18:45", icon:"🐟",  transport:"walk",    description:"회덮밥 · 예약완료 · Daimyo 1-1-23 · ~5만원 레전드급", travelMin:5  },
+  { id:17, name:"British Pub MORRIS' REDFOX", nameKr:"모리스 레드폭스 (펍)",lat:33.588665,lng:130.3960012,day:2,time:"20:15",icon:"⚽",transport:"walk",    description:"Arsenal vs Bournemouth · PL 32R · 20:30 KO",travelMin:4  },
+  { id:18, name:"Nakasu Yatai Street",        nameKr:"나카스 포장마차 거리",lat:33.5920, lng:130.4030, day:2, time:"22:30", icon:"🏮",  transport:"walk",    description:"축구 관람 후 포장마차 🍢",                   travelMin:10 },
+  { id:19, name:"Plaza Hotel Premier",        nameKr:"숙소 복귀",         lat:33.5883, lng:130.3912, day:2, time:"24:00", icon:"🌙",  transport:"sleep",   description:"Day 2 종료 · 취침",                        travelMin:0  },
+
+  { id:20, name:"Hotel Checkout",             nameKr:"체크아웃 & 짐보관",  lat:33.5883, lng:130.3912, day:3, time:"09:00", icon:"🧳",  transport:"bus",     description:"짐 맡기기 500엔",                           travelMin:30 },
+  { id:21, name:"Tomiichi, Itoshima",         nameKr:"토미이치 (이토시마)", lat:33.5552, lng:130.2245, day:3, time:"10:00", icon:"🍽️", transport:"bus",     description:"장어덮밥 · 버스 25~35분 / 택시 15~20분",     travelMin:35 },
+  { id:22, name:"Seria Daimyo",               nameKr:"세리아 다이묘",      lat:33.5886, lng:130.3915, day:3, time:"11:30", icon:"🛍️", transport:"walk",    description:"예쁜 컵 쇼핑 ☕ · 도보 15~20분 / 택시 10분", travelMin:10 },
+  { id:23, name:"Fukuoka Symphony Hall",      nameKr:"후쿠오카 심포니홀",  lat:33.5920, lng:130.4025, day:3, time:"13:00", icon:"🎹",  transport:"walk",    description:"14시 공연 · 13시까지 도착!",                 travelMin:12 },
+  { id:24, name:"Plaza Hotel (Luggage)",      nameKr:"숙소 (짐 찾기)",    lat:33.5883, lng:130.3912, day:3, time:"16:00", icon:"🧳",  transport:"subway",  description:"공연 후 짐 수령 · 도보 10~15분",             travelMin:15 },
+  { id:25, name:"Fukuoka Airport (FUK)",      nameKr:"후쿠오카공항",       lat:33.5859, lng:130.4507, day:3, time:"18:00", icon:"✈️",  transport:"flight",  description:"공항 저녁 + TW236 · 20:00 → PUS 20:55",     travelMin:55 },
+  { id:26, name:"Gimhae Airport (PUS)",       nameKr:"부산/김해공항",      lat:35.1796, lng:128.9382, day:3, time:"20:55", icon:"🏠",  transport:null,      description:"도착 · 여행 끝",                            travelMin:null }
+];
+
+const DAY_INFO = {
+  1: { date:"4월 10일 금요일", dateEn:"FRI, APR 10", dateBadge:"4.10 FRI", subtitle:"도착, 맛집, 재즈",        color:"#d64545" },
+  2: { date:"4월 11일 토요일", dateEn:"SAT, APR 11", dateBadge:"4.11 SAT", subtitle:"공원, LP, 축구, 포장마차", color:"#4a8a6a" },
+  3: { date:"4월 12일 일요일", dateEn:"SUN, APR 12", dateBadge:"4.12 SUN", subtitle:"이토시마, 공연, 귀국",     color:"#3a4a7a" }
+};
+
+const TRANSPORT_ICONS = { flight:"✈️", subway:"🚇", walk:"🚶", bus:"🚌" };
+const TRANSPORT_COLORS = { flight:"#d64545", subway:"#3a4a7a", walk:"#4a8a6a", bus:"#c4993e" };
+
+// ══════════════════════════════════════════
+//  MAP INIT
+// ══════════════════════════════════════════
+
+const map = L.map('map', {
+  zoomControl: false,
+  attributionControl: false
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+}).addTo(map);
+
+L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
+
+const allBounds = L.latLngBounds(STOPS.map(s => [s.lat, s.lng]));
+map.fitBounds(allBounds, { padding: [50, 50] });
+
+// ══════════════════════════════════════════
+//  ROUTE LINES
+// ══════════════════════════════════════════
+
+function createBezierArc(p1, p2, numPoints) {
+  numPoints = numPoints || 60;
+  const points = [];
+  const midLat = (p1[0] + p2[0]) / 2;
+  const midLng = (p1[1] + p2[1]) / 2;
+  const dist = Math.sqrt(Math.pow(p2[0] - p1[0], 2) + Math.pow(p2[1] - p1[1], 2));
+  const arcHeight = dist * 0.3;
+  for (let i = 0; i <= numPoints; i++) {
+    const t = i / numPoints;
+    const lat = (1-t)*(1-t)*p1[0] + 2*(1-t)*t*(midLat + arcHeight) + t*t*p2[0];
+    const lng = (1-t)*(1-t)*p1[1] + 2*(1-t)*t*midLng + t*t*p2[1];
+    points.push([lat, lng]);
+  }
+  return points;
+}
+
+const segments = []; // { points:[[lat,lng],...], polyline:L.polyline, transport, fromStop, toStop }
+
+for (let i = 0; i < STOPS.length - 1; i++) {
+  const from = STOPS[i];
+  const to = STOPS[i + 1];
+  if (from.transport === 'sleep' || from.transport === null) {
+    segments.push({ points: [], polyline: null, transport: from.transport, fromStop: i, toStop: i + 1 });
+    continue;
+  }
+
+  const p1 = [from.lat, from.lng];
+  const p2 = [to.lat, to.lng];
+  let points;
+  let style = {};
+
+  if (from.transport === 'flight') {
+    points = createBezierArc(p1, p2, 80);
+    style = { color: TRANSPORT_COLORS.flight, weight: 2.5, opacity: 0.2, dashArray: null };
+  } else if (from.transport === 'subway') {
+    points = [p1, p2];
+    style = { color: TRANSPORT_COLORS.subway, weight: 3, opacity: 0.2, dashArray: '12, 6' };
+  } else if (from.transport === 'walk') {
+    points = [p1, p2];
+    style = { color: TRANSPORT_COLORS.walk, weight: 2, opacity: 0.2, dashArray: '6, 10' };
+  } else if (from.transport === 'bus') {
+    points = [p1, p2];
+    style = { color: TRANSPORT_COLORS.bus, weight: 3, opacity: 0.2, dashArray: null };
+  } else {
+    points = [p1, p2];
+    style = { color: '#999', weight: 2, opacity: 0.2 };
+  }
+
+  const polyline = L.polyline(points, style).addTo(map);
+  segments.push({ points, polyline, transport: from.transport, fromStop: i, toStop: i + 1 });
+}
+
+// ══════════════════════════════════════════
+//  MARKERS
+// ══════════════════════════════════════════
+
+const markers = [];
+
+STOPS.forEach((stop, idx) => {
+  const dayColor = DAY_INFO[stop.day].color;
+  const marker = L.marker([stop.lat, stop.lng], {
+    icon: L.divIcon({
+      className: '',
+      html: '<div class="stop-marker" data-idx="' + idx + '" style="border: 2px solid ' + dayColor + '">' + stop.icon + '</div>',
+      iconSize: [36, 36],
+      iconAnchor: [18, 18]
+    }),
+    zIndexOffset: 100
+  }).addTo(map);
+
+  marker.bindTooltip(stop.nameKr + ' ' + stop.time, {
+    direction: 'top',
+    offset: [0, -20],
+    className: 'stop-tooltip'
+  });
+
+  marker.on('click', function() {
+    anim.jumpToStop(idx);
+  });
+
+  markers.push(marker);
+});
+
+// Moving marker
+const movingMarkerIcon = L.divIcon({
+  className: '',
+  html: '<div class="moving-marker" id="movingIcon">✈️</div>',
+  iconSize: [32, 32],
+  iconAnchor: [16, 16]
+});
+const movingMarker = L.marker([STOPS[0].lat, STOPS[0].lng], {
+  icon: movingMarkerIcon,
+  zIndexOffset: 2000
+}).addTo(map);
+
+// ══════════════════════════════════════════
+//  INTERPOLATION
+// ══════════════════════════════════════════
+
+function interpolateRoute(segIdx, t) {
+  const seg = segments[segIdx];
+  if (!seg || !seg.points || seg.points.length === 0) {
+    const stop = STOPS[seg ? seg.toStop : 0];
+    return [stop.lat, stop.lng];
+  }
+  t = Math.max(0, Math.min(1, t));
+  const pts = seg.points;
+  const totalLen = pts.length - 1;
+  const pos = t * totalLen;
+  const i = Math.floor(pos);
+  const frac = pos - i;
+  if (i >= totalLen) return pts[totalLen];
+  return [
+    pts[i][0] + (pts[i+1][0] - pts[i][0]) * frac,
+    pts[i][1] + (pts[i+1][1] - pts[i][1]) * frac
+  ];
+}
+
+// ══════════════════════════════════════════
+//  ANIMATION CONTROLLER
+// ══════════════════════════════════════════
+
+const anim = {
+  currentSegment: 0,
+  progress: 0,
+  isPlaying: false,
+  speed: 1,
+  lastTimestamp: null,
+  dayFilter: 'all',
+  transitioning: false,
+  trailTimers: [],
+  idleTimer: null,
+
+  play() {
+    if (this.transitioning) return;
+    this.isPlaying = true;
+    this.lastTimestamp = null;
+    document.getElementById('playBtn').textContent = '⏸';
+    this._resetIdle();
+    requestAnimationFrame(t => this.tick(t));
+  },
+
+  pause() {
+    this.isPlaying = false;
+    document.getElementById('playBtn').textContent = '▶';
+  },
+
+  toggle() {
+    this.isPlaying ? this.pause() : this.play();
+  },
+
+  setSpeed(s) {
+    this.speed = s;
+    document.querySelectorAll('.speed-btn').forEach(b => {
+      b.classList.toggle('active', Number(b.dataset.speed) === s);
+    });
+  },
+
+  _segmentDuration(segIdx) {
+    const stop = STOPS[segIdx];
+    if (!stop) return 2000;
+    const mins = stop.travelMin || 5;
+    // Base: 1 real-minute = 120ms animation-time at 1x speed
+    // flight gets compressed, walk gets expanded for visibility
+    let base = mins * 120;
+    if (stop.transport === 'flight') base = Math.max(base, 3000);
+    else if (stop.transport === 'walk') base = Math.max(base, 800);
+    else if (stop.transport === 'subway') base = Math.max(base, 1200);
+    else if (stop.transport === 'bus') base = Math.max(base, 2000);
+    return base;
+  },
+
+  tick(timestamp) {
+    if (!this.isPlaying) return;
+    if (!this.lastTimestamp) this.lastTimestamp = timestamp;
+    const delta = timestamp - this.lastTimestamp;
+    this.lastTimestamp = timestamp;
+
+    const seg = segments[this.currentSegment];
+    if (!seg) { this.pause(); return; }
+
+    // sleep segments → trigger day transition
+    if (seg.transport === 'sleep') {
+      this.progress = 1;
+      this._onSegmentComplete();
+      return;
+    }
+
+    const duration = this._segmentDuration(this.currentSegment);
+    this.progress += (delta * this.speed) / duration;
+
+    if (this.progress >= 1) {
+      this.progress = 1;
+      this._updatePosition();
+      this._onSegmentComplete();
+      return;
+    }
+
+    this._updatePosition();
+    this._updateRouteVisuals();
+    this._updateProgressBar();
+
+    requestAnimationFrame(t => this.tick(t));
+  },
+
+  _updatePosition() {
+    const seg = segments[this.currentSegment];
+    if (!seg || !seg.points || seg.points.length === 0) return;
+    const pos = interpolateRoute(this.currentSegment, this.progress);
+    movingMarker.setLatLng(pos);
+    this._spawnTrail(pos);
+
+    // Camera follows marker during flight segments
+    if (seg.transport === 'flight') {
+      const zoom = map.getZoom();
+      map.setView(pos, zoom, { animate: false });
+    }
+  },
+
+  _spawnTrail(pos) {
+    const seg = segments[this.currentSegment];
+    if (!seg) return;
+    const color = TRANSPORT_COLORS[seg.transport] || '#999';
+    const dot = L.circleMarker(pos, {
+      radius: 3,
+      fillColor: color,
+      fillOpacity: 0.5,
+      stroke: false,
+      className: 'trail-dot-canvas'
+    }).addTo(map);
+    const timer = setTimeout(() => { map.removeLayer(dot); }, 800);
+    this.trailTimers.push(timer);
+    if (this.trailTimers.length > 50) {
+      clearTimeout(this.trailTimers.shift());
+    }
+  },
+
+  _dwellAtStop(callback) {
+    // Pause briefly at each stop (1.5s at 1x, scales with speed)
+    const dwellMs = 1500 / this.speed;
+    this.pause();
+    // Show arrival stop info
+    const seg = segments[this.currentSegment];
+    if (seg) {
+      this._updateStopCard(seg.toStop);
+      this._updateMarkerStates(seg.toStop);
+    }
+    setTimeout(() => {
+      callback();
+    }, dwellMs);
+  },
+
+  _onSegmentComplete() {
+    // Update segment visuals to "passed"
+    const seg = segments[this.currentSegment];
+    if (seg && seg.polyline) {
+      seg.polyline.setStyle({ opacity: 0.7 });
+    }
+
+    const nextSeg = this.currentSegment + 1;
+    if (nextSeg >= segments.length) {
+      this.pause();
+      this._updateStopCard(STOPS.length - 1);
+      this._updateMarkerStates(STOPS.length - 1);
+      return;
+    }
+
+    // Check day transition
+    const curDay = STOPS[segments[this.currentSegment].fromStop].day;
+    const nextDay = STOPS[segments[nextSeg].fromStop].day;
+
+    if (curDay !== nextDay) {
+      this.pause();
+      this._dwellAtStop(() => {
+        this.currentSegment = nextSeg;
+        this.progress = 0;
+        this._showDayTransition(nextDay, () => {
+          this._enterSegment(nextSeg);
+          this.play();
+        });
+      });
+      return;
+    }
+
+    // Dwell at the arrived stop before moving on
+    this._dwellAtStop(() => {
+      this.currentSegment = nextSeg;
+      this.progress = 0;
+      this._enterSegment(nextSeg);
+      this.play();
+    });
+  },
+
+  _enterSegment(segIdx) {
+    const seg = segments[segIdx];
+    if (!seg) return;
+    const stop = STOPS[seg.fromStop];
+
+    // Update moving marker icon
+    const icon = TRANSPORT_ICONS[seg.transport] || stop.icon;
+    document.getElementById('movingIcon').textContent = icon;
+
+    // Update stop card
+    this._updateStopCard(seg.fromStop);
+    this._updateMarkerStates(seg.fromStop);
+    this._updateBadge(stop.day);
+
+    // Camera: fly to appropriate view for this segment
+    if (seg.points && seg.points.length > 0) {
+      if (seg.transport === 'flight') {
+        // Flight: zoom out to see departure, then camera will follow marker
+        map.flyTo(seg.points[0], 7, { duration: 1.0 });
+      } else {
+        const dist = map.distance(seg.points[0], seg.points[seg.points.length - 1]);
+        if (dist < 3000) {
+          map.flyTo(seg.points[0], 15, { duration: 0.8 });
+        } else {
+          const bounds = L.latLngBounds(seg.points);
+          map.flyToBounds(bounds.pad(0.5), { duration: 0.8 });
+        }
+      }
+    }
+
+    // Set current segment to full color, future to dim
+    this._updateRouteVisuals();
+    this._updateProgressBar();
+  },
+
+  _updateRouteVisuals() {
+    segments.forEach((seg, i) => {
+      if (!seg.polyline) return;
+      if (i < this.currentSegment) {
+        seg.polyline.setStyle({ opacity: 0.7 });
+      } else if (i === this.currentSegment) {
+        seg.polyline.setStyle({ opacity: 0.9 });
+      } else {
+        seg.polyline.setStyle({ opacity: 0.2 });
+      }
+    });
+  },
+
+  _updateProgressBar() {
+    const totalSegs = segments.length;
+    const pct = ((this.currentSegment + this.progress) / totalSegs) * 100;
+    const fill = document.getElementById('progressFill');
+    fill.style.width = pct + '%';
+    const day = STOPS[segments[this.currentSegment] ? segments[this.currentSegment].fromStop : 0].day;
+    fill.style.background = DAY_INFO[day].color;
+    fill.style.color = DAY_INFO[day].color;
+  },
+
+  _updateStopCard(stopIdx) {
+    const stop = STOPS[stopIdx];
+    const card = document.getElementById('stopCard');
+    card.classList.add('hide');
+    setTimeout(() => {
+      document.getElementById('cardIcon').textContent = stop.icon;
+      document.getElementById('cardName').textContent = stop.nameKr;
+      document.getElementById('cardNameEn').textContent = stop.name;
+      document.getElementById('cardDesc').textContent = stop.description;
+      document.getElementById('cardTime').textContent = 'Day ' + stop.day + ' · ' + stop.time;
+      const next = stop.transport;
+      document.getElementById('cardTransport').textContent = next ? (TRANSPORT_ICONS[next] || '') + ' ' + next : '🏁 종점';
+      card.classList.remove('hide');
+    }, 200);
+  },
+
+  _updateMarkerStates(activeIdx) {
+    document.querySelectorAll('.stop-marker').forEach(el => {
+      const idx = Number(el.dataset.idx);
+      el.classList.toggle('active', idx === activeIdx);
+      el.classList.toggle('dimmed', idx > activeIdx);
+    });
+  },
+
+  _updateBadge(day) {
+    const info = DAY_INFO[day];
+    document.getElementById('badgeDay').textContent = 'DAY ' + day;
+    document.getElementById('badgeDay').style.color = info.color;
+    document.getElementById('badgeDate').textContent = info.dateBadge;
+  },
+
+  _showDayTransition(day, callback) {
+    this.transitioning = true;
+    const info = DAY_INFO[day];
+    const overlay = document.getElementById('dayOverlay');
+    document.getElementById('overlayNum').textContent = 'DAY ' + day;
+    document.getElementById('overlayNum').style.color = info.color;
+    document.getElementById('overlayDate').textContent = info.date;
+    document.getElementById('overlaySub').textContent = info.subtitle;
+
+    overlay.classList.add('show');
+
+    // Fly map to first stop of new day
+    const firstStop = STOPS.find(s => s.day === day);
+    if (firstStop) {
+      map.flyTo([firstStop.lat, firstStop.lng], 14, { duration: 1.5 });
+    }
+
+    this._updateBadge(day);
+
+    setTimeout(() => {
+      overlay.classList.remove('show');
+      setTimeout(() => {
+        this.transitioning = false;
+        if (callback) callback();
+      }, 500);
+    }, 2200);
+  },
+
+  nextStop() {
+    if (this.transitioning) return;
+    const next = this.currentSegment + 1;
+    if (next >= segments.length) return;
+
+    // Check day transition
+    const curDay = STOPS[segments[this.currentSegment].fromStop].day;
+    const nextDay = STOPS[segments[next].fromStop].day;
+
+    // Mark current as passed
+    const seg = segments[this.currentSegment];
+    if (seg && seg.polyline) seg.polyline.setStyle({ opacity: 0.7 });
+
+    if (curDay !== nextDay) {
+      const wasPlaying = this.isPlaying;
+      this.pause();
+      this.currentSegment = next;
+      this.progress = 0;
+      this._showDayTransition(nextDay, () => {
+        this._enterSegment(next);
+        if (wasPlaying) this.play();
+      });
+    } else {
+      this.currentSegment = next;
+      this.progress = 0;
+      this._enterSegment(next);
+      if (this.isPlaying) {
+        this.lastTimestamp = null;
+        requestAnimationFrame(t => this.tick(t));
+      }
+    }
+  },
+
+  prevStop() {
+    if (this.transitioning) return;
+    if (this.currentSegment <= 0) return;
+
+    const prev = this.currentSegment - 1;
+    const curDay = STOPS[segments[this.currentSegment].fromStop].day;
+    const prevDay = STOPS[segments[prev].fromStop].day;
+
+    // Undo future visuals
+    segments[this.currentSegment].polyline && segments[this.currentSegment].polyline.setStyle({ opacity: 0.2 });
+
+    if (curDay !== prevDay) {
+      const wasPlaying = this.isPlaying;
+      this.pause();
+      this.currentSegment = prev;
+      this.progress = 0;
+      this._showDayTransition(prevDay, () => {
+        this._enterSegment(prev);
+        if (wasPlaying) this.play();
+      });
+    } else {
+      this.currentSegment = prev;
+      this.progress = 0;
+      this._enterSegment(prev);
+      if (this.isPlaying) {
+        this.lastTimestamp = null;
+        requestAnimationFrame(t => this.tick(t));
+      }
+    }
+  },
+
+  jumpToStop(stopIdx) {
+    if (this.transitioning) return;
+    // Find segment that starts from this stop
+    let segIdx = segments.findIndex(s => s.fromStop === stopIdx);
+    if (segIdx === -1) segIdx = segments.length - 1;
+
+    const wasPlaying = this.isPlaying;
+    this.pause();
+
+    // Update all previous segments as passed
+    segments.forEach((seg, i) => {
+      if (!seg.polyline) return;
+      seg.polyline.setStyle({ opacity: i < segIdx ? 0.7 : i === segIdx ? 0.9 : 0.2 });
+    });
+
+    const prevDay = STOPS[segments[this.currentSegment] ? segments[this.currentSegment].fromStop : 0].day;
+    const newDay = STOPS[stopIdx].day;
+
+    this.currentSegment = segIdx;
+    this.progress = 0;
+
+    if (prevDay !== newDay) {
+      this._showDayTransition(newDay, () => {
+        this._enterSegment(segIdx);
+        if (wasPlaying) this.play();
+      });
+    } else {
+      this._enterSegment(segIdx);
+      if (wasPlaying) this.play();
+    }
+  },
+
+  seekTo(pct) {
+    if (this.transitioning) return;
+    const totalSegs = segments.length;
+    const pos = (pct / 100) * totalSegs;
+    const segIdx = Math.min(Math.floor(pos), totalSegs - 1);
+    const prog = pos - segIdx;
+
+    const wasPlaying = this.isPlaying;
+    this.pause();
+
+    segments.forEach((seg, i) => {
+      if (!seg.polyline) return;
+      seg.polyline.setStyle({ opacity: i < segIdx ? 0.7 : i === segIdx ? 0.9 : 0.2 });
+    });
+
+    this.currentSegment = segIdx;
+    this.progress = prog;
+    this._enterSegment(segIdx);
+    this._updatePosition();
+    this._updateProgressBar();
+
+    if (wasPlaying) {
+      setTimeout(() => this.play(), 100);
+    }
+  },
+
+  filterDay(day) {
+    this.dayFilter = day;
+
+    // Update panel buttons
+    document.querySelectorAll('.day-panel button').forEach(b => {
+      b.classList.toggle('active', b.dataset.day === String(day));
+    });
+
+    // Show/hide markers and segments
+    STOPS.forEach((stop, idx) => {
+      const show = day === 'all' || stop.day === Number(day);
+      if (show) {
+        markers[idx].addTo(map);
+      } else {
+        map.removeLayer(markers[idx]);
+      }
+    });
+
+    segments.forEach((seg, idx) => {
+      if (!seg.polyline) return;
+      const stopDay = STOPS[seg.fromStop].day;
+      const show = day === 'all' || stopDay === Number(day);
+      if (show) {
+        seg.polyline.addTo(map);
+      } else {
+        map.removeLayer(seg.polyline);
+      }
+    });
+
+    // Fit bounds
+    let visibleStops;
+    if (day === 'all') {
+      visibleStops = STOPS;
+    } else {
+      visibleStops = STOPS.filter(s => s.day === Number(day));
+    }
+    if (visibleStops.length > 0) {
+      const bounds = L.latLngBounds(visibleStops.map(s => [s.lat, s.lng]));
+      map.flyToBounds(bounds.pad(0.3), { duration: 0.8 });
+    }
+  },
+
+  _resetIdle() {
+    clearTimeout(this.idleTimer);
+    document.getElementById('controlBar').classList.remove('idle');
+    this.idleTimer = setTimeout(() => {
+      if (this.isPlaying) {
+        document.getElementById('controlBar').classList.add('idle');
+      }
+    }, 5000);
+  },
+
+  // Start: show Day 1 transition then begin
+  start() {
+    this._showDayTransition(1, () => {
+      this._enterSegment(0);
+      // Position moving marker at start
+      movingMarker.setLatLng([STOPS[0].lat, STOPS[0].lng]);
+      document.getElementById('movingIcon').textContent = TRANSPORT_ICONS[STOPS[0].transport] || STOPS[0].icon;
+    });
+  }
+};
+
+// ══════════════════════════════════════════
+//  EVENT BINDINGS
+// ══════════════════════════════════════════
+
+document.getElementById('playBtn').addEventListener('click', () => anim.toggle());
+document.getElementById('nextBtn').addEventListener('click', () => anim.nextStop());
+document.getElementById('prevBtn').addEventListener('click', () => anim.prevStop());
+
+document.querySelectorAll('.speed-btn').forEach(btn => {
+  btn.addEventListener('click', () => anim.setSpeed(Number(btn.dataset.speed)));
+});
+
+document.getElementById('progressWrap').addEventListener('click', function(e) {
+  const rect = this.getBoundingClientRect();
+  const pct = ((e.clientX - rect.left) / rect.width) * 100;
+  anim.seekTo(pct);
+});
+
+document.querySelectorAll('.day-panel button').forEach(btn => {
+  btn.addEventListener('click', () => anim.filterDay(btn.dataset.day));
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); anim.toggle(); }
+  else if (e.code === 'ArrowRight') { anim.nextStop(); }
+  else if (e.code === 'ArrowLeft') { anim.prevStop(); }
+  else if (e.key === '1') { anim.setSpeed(1); }
+  else if (e.key === '2') { anim.setSpeed(2); }
+  else if (e.key === '4') { anim.setSpeed(4); }
+});
+
+// Touch: show control bar
+document.addEventListener('touchstart', () => anim._resetIdle(), { passive: true });
+document.addEventListener('mousemove', () => anim._resetIdle());
+
+// ══════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════
+
+anim.start();
+
+})();
+</script>
+</body>
+</html>
